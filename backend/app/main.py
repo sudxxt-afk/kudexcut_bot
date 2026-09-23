@@ -1,9 +1,9 @@
-from collections.abc import AsyncIterator
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
@@ -110,6 +110,7 @@ async def get_status(
 
 @app.post("/api/sessions/{session_id}/trim")
 async def trim_video(
+    request: Request,
     session_id: str,
     payload: TrimRequest,
     user: TelegramUser = Depends(current_user),
@@ -120,6 +121,16 @@ async def trim_video(
         raise HTTPException(status_code=422, detail="End must be greater than start")
     if payload.end > session.duration_seconds:
         raise HTTPException(status_code=422, detail="End exceeds video duration")
-    if session.status != "editing":
+    claimed = await store.claim_for_processing(session.session_id)
+    if claimed is None:
         raise HTTPException(status_code=409, detail="Session is not editable")
-    return {"session_id": session.session_id, "status": "accepted"}
+    job = {
+        "session_id": claimed.session_id,
+        "telegram_user_id": claimed.telegram_user_id,
+        "chat_id": claimed.chat_id,
+        "input_path": claimed.file_path,
+        "start": payload.start,
+        "end": payload.end,
+    }
+    await request.app.state.redis.rpush(SessionStore.JOB_QUEUE, json.dumps(job))
+    return {"session_id": claimed.session_id, "status": "queued"}

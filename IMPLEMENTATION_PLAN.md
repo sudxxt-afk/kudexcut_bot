@@ -226,21 +226,23 @@ API smoke: GET /health → {"status":"ok"}
 API auth smoke: missing init data → HTTP 401
 ```
 
-## 4. Что пока не реализовано
+## 4. Текущее состояние реализации
 
-На текущем этапе отсутствуют:
+Реализовано:
 
-- очередь обработки и полноценный FFmpeg worker;
-- отправка результата обратно в Telegram;
-- cleanup job для файлов после TTL;
-- расширенный production deployment;
-- timeline;
-- выбор диапазона;
-- FFmpeg worker;
-- очередь задач;
-- отправка результата в Telegram;
-- cleanup job;
-- автоматические тесты.
+- Redis queue `videocut:jobs:trim` и атомарный перевод сессии `editing → queued`;
+- отдельный FFmpeg worker с точной обрезкой через перекодирование;
+- статусы `processing`, `sending`, `completed`, `failed`;
+- отправка результата через Telegram Bot API;
+- удаление session directory после завершения или ошибки;
+- worker unit tests и API-проверка payload очереди;
+- polling статуса в Mini App с очисткой таймера при размонтировании и обработкой ошибок.
+
+Остаются отдельные production-задачи:
+
+- полный smoke-тест с настоящим Telegram `BOT_TOKEN`;
+- наблюдаемость, retry policy и cleanup просроченных Redis-сессий;
+- расширенная защита от ошибок инфраструктуры и deployment hardening.
 
 ## 5. Предстоящие этапы реализации
 
@@ -425,6 +427,15 @@ Flow:
 
 ### Этап 8. Реализовать очередь и FFmpeg worker
 
+Статус: реализовано и проверено сборкой, unit-тестами и Compose startup.
+
+Реализовано:
+
+- Redis List queue `videocut:jobs:trim`;
+- атомарный claim `editing → queued` через Redis optimistic transaction;
+- FFmpeg worker с exact trim, отправкой в Telegram и удалением session directory;
+- статусы `processing`, `sending`, `completed`, `failed`.
+
 Worker получает:
 
 ```json
@@ -467,6 +478,21 @@ Worker обязан:
 
 ### Этап 9. Добавить cleanup и отказоустойчивость
 
+Статус: базовые сценарии реализованы; production hardening остается отдельной задачей.
+
+Реализовано:
+
+- cleanup session directory в `finally` после успеха или ошибки worker;
+- защита от повторной постановки одной сессии в очередь;
+- обработка timeout и ошибки FFmpeg;
+- обработка ошибки отправки в Telegram через статус `failed`;
+- очистка Mini App polling при размонтировании и сетевой ошибке.
+
+Остается:
+
+- отдельный cleanup job для просроченных/зависших директорий;
+- ограниченная retry policy и readiness/health checks.
+
 Обработать:
 
 - повторное нажатие «Готово»;
@@ -481,6 +507,15 @@ Worker обязан:
 Cleanup job удаляет файлы старше TTL и зависшие временные директории.
 
 ### Этап 10. Написать тесты
+
+Статус: базовое покрытие добавлено и проходит в контейнерах.
+
+Проверено на сервере:
+
+- backend: 13 passed;
+- worker: 2 passed;
+- bot: 24 passed;
+- Mini App: production build passed.
 
 Backend:
 

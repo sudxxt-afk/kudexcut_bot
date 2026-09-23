@@ -1,8 +1,9 @@
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,8 @@ class MediaSession:
 
 
 class SessionStore:
+    JOB_QUEUE = "videocut:jobs:trim"
+
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
 
@@ -32,6 +35,42 @@ class SessionStore:
         if isinstance(payload, bytes):
             payload = payload.decode("utf-8")
         return MediaSession(**json.loads(payload))
+
+    async def update_status(self, session_id: str, status: str) -> MediaSession | None:
+        session = await self.get(session_id)
+        if session is None:
+            return None
+        payload = asdict(session)
+        payload["status"] = status
+        ttl = await self._redis.ttl(self._key(session_id))
+        await self._redis.set(self._key(session_id), json.dumps(payload), ex=max(ttl, 1))
+        return MediaSession(**payload)
+
+    async def claim_for_processing(self, session_id: str) -> MediaSession | None:
+        key = self._key(session_id)
+        for _ in range(3):
+            try:
+                async with self._redis.pipeline(transaction=True) as pipeline:
+                    await pipeline.watch(key)
+                    raw = await pipeline.get(key)
+                    if raw is None:
+                        await pipeline.reset()
+                        return None
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    payload = json.loads(raw)
+                    if payload["status"] != "editing":
+                        await pipeline.reset()
+                        return None
+                    payload["status"] = "queued"
+                    ttl = await pipeline.ttl(key)
+                    pipeline.multi()
+                    pipeline.set(key, json.dumps(payload), ex=max(ttl, 1))
+                    await pipeline.execute()
+                    return MediaSession(**payload)
+            except WatchError:
+                continue
+        return None
 
     @staticmethod
     def _key(session_id: str) -> str:

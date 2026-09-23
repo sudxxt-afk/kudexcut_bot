@@ -42,6 +42,34 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionId || !processingStatus || ['completed', 'failed'].includes(processingStatus)) return;
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}/status`, {
+          headers: { 'X-Telegram-Init-Data': window.Telegram?.WebApp.initData ?? '' },
+        });
+        if (!response.ok) throw new Error('Не удалось получить статус обработки');
+        const data = await response.json() as { status: string };
+        if (cancelled) return;
+        setProcessingStatus(data.status);
+        if (data.status === 'completed') setError('Готово. Видео отправлено в Telegram.');
+        if (data.status === 'failed') setError('Не удалось обработать видео. Попробуй ещё раз.');
+      } catch (reason) {
+        if (!cancelled) {
+          setProcessingStatus('failed');
+          setError(reason instanceof Error ? reason.message : 'Не удалось получить статус обработки');
+        }
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [processingStatus, sessionId]);
 
   useEffect(() => {
     window.Telegram?.WebApp.ready();
@@ -52,6 +80,7 @@ function App() {
     }
 
     const initData = window.Telegram?.WebApp.initData ?? '';
+    let cancelled = false;
     fetch(`/api/sessions/${sessionId}`, {
       headers: { 'X-Telegram-Init-Data': initData },
     })
@@ -62,11 +91,19 @@ function App() {
         return response.json() as Promise<Session>;
       })
       .then((data) => {
+        if (cancelled) return;
         setSession(data);
         setEnd(data.duration_seconds);
       })
-      .catch((reason: Error) => setError(reason.message))
-      .finally(() => setLoading(false));
+      .catch((reason: Error) => {
+        if (!cancelled) setError(reason.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId]);
 
   async function submitTrim() {
@@ -85,7 +122,8 @@ function App() {
       if (!response.ok) {
         throw new Error((await response.json()).detail ?? 'Не удалось отправить задачу');
       }
-      setError('Диапазон принят. Обработка будет добавлена следующим этапом.');
+      const accepted = await response.json() as { status: string };
+      setProcessingStatus(accepted.status);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Произошла ошибка');
     } finally {
@@ -107,7 +145,7 @@ function App() {
         <input aria-label="Конец фрагмента" type="range" min={0} max={session.duration_seconds} step={0.1} value={end} onChange={(event) => setEnd(Math.max(Number(event.target.value), start + 0.1))} />
         <div className="fields"><label>Начало<input type="number" min={0} max={end - 0.1} step={0.1} value={start} onChange={(event) => setStart(Number(event.target.value))} /></label><label>Конец<input type="number" min={start + 0.1} max={session.duration_seconds} step={0.1} value={end} onChange={(event) => setEnd(Number(event.target.value))} /></label></div>
       </section>
-      <button className="primary" disabled={submitting || end <= start} onClick={submitTrim}>{submitting ? 'Отправляю…' : 'Готово'}</button>
+      <button className="primary" disabled={submitting || processingStatus !== null || end <= start} onClick={submitTrim}>{submitting ? 'Отправляю…' : processingStatus ? `Обработка: ${processingStatus}` : 'Готово'}</button>
       {error && <p className="notice">{error}</p>}
     </main>
   );

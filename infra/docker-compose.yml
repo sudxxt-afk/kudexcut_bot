@@ -37,11 +37,26 @@ services:
       - api
       - redis
 
+  worker:
+    build:
+      context: ../worker
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      REDIS_URL: redis://redis:6379/0
+      TEMP_DIR: /tmp/videocut
+      FFMPEG_TIMEOUT_SECONDS: ${FFMPEG_TIMEOUT_SECONDS}
+    volumes:
+      - videocut_tmp:/tmp/videocut
+    depends_on:
+      - redis
+
   miniapp:
     build:
       context: ../miniapp
     ports:
       - "8080:80"
+    depends_on:
+      - api
 
 volumes:
   videocut_tmp:

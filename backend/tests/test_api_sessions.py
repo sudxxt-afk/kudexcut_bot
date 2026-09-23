@@ -102,13 +102,22 @@ async def test_foreign_session_is_rejected(client) -> None:
 @pytest.mark.asyncio
 async def test_trim_validates_range(client) -> None:
     http_client, session_id, init_data = client
+    session_payload = json.loads(await app.state.redis.get(f"videocut:session:{session_id}"))
     response = await http_client.post(
         f"/api/sessions/{session_id}/trim",
         headers={"X-Telegram-Init-Data": init_data},
         json={"start": 10, "end": 20},
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "accepted"
+    assert response.json()["status"] == "queued"
+    assert json.loads(await app.state.redis.lpop("videocut:jobs:trim")) == {
+        "session_id": session_id,
+        "telegram_user_id": 42,
+        "chat_id": 99,
+        "input_path": session_payload["file_path"],
+        "start": 10.0,
+        "end": 20.0,
+    }
 
     invalid = await http_client.post(
         f"/api/sessions/{session_id}/trim",
