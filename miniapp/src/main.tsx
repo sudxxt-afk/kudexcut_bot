@@ -88,24 +88,31 @@ function App() {
         if (!response.ok) throw new Error((await response.json()).detail ?? 'Не удалось открыть видео');
         return response.json() as Promise<Session>;
       })
-      .then(async (data) => {
-        const videoResponse = await fetch(data.video_url, {
-          headers: { 'X-Telegram-Init-Data': initData },
-        });
-        if (!videoResponse.ok) throw new Error('Не удалось загрузить видео');
-        const videoBlob = await videoResponse.blob();
+      .then((data) => {
         if (cancelled) return;
         setSession(data);
         setDuration(data.duration_seconds);
         setStart(0);
         setEnd(data.duration_seconds);
-        setVideoUrl(URL.createObjectURL(videoBlob));
+        setLoading(false);
+
+        void fetch(data.video_url, {
+          headers: { 'X-Telegram-Init-Data': initData },
+        })
+          .then(async (videoResponse) => {
+            if (!videoResponse.ok) throw new Error('Не удалось загрузить видео');
+            const videoBlob = await videoResponse.blob();
+            if (!cancelled) setVideoUrl(URL.createObjectURL(videoBlob));
+          })
+          .catch((reason: Error) => {
+            if (!cancelled) setError(reason.message);
+          });
       })
       .catch((reason: Error) => {
-        if (!cancelled) setError(reason.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setError(reason.message);
+          setLoading(false);
+        }
       });
 
     return () => {
@@ -228,7 +235,7 @@ function App() {
   }
 
   function seek(value: number) {
-    const next = clamp(value, 0, duration);
+    const next = clamp(value, start, end);
     setCurrentTime(next);
     if (videoRef.current) videoRef.current.currentTime = next;
   }
@@ -298,13 +305,13 @@ function App() {
     }
   }
 
-  if (loading) return <main className="state">Загружаю видео…</main>;
+  if (loading) return <main className="state"><div className="loading-message">Загружаю видео<span className="loading-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></div></main>;
   if (error && !session) return <main className="state error">{error}</main>;
   if (!session) return <main className="state error">Сессия недоступна.</main>;
 
   const startPercent = duration ? (start / duration) * 100 : 0;
   const endPercent = duration ? (end / duration) * 100 : 100;
-  const playheadPercent = duration ? (currentTime / duration) * 100 : 0;
+  const playheadPercent = duration ? (clamp(currentTime, start, end) / duration) * 100 : 0;
   const selectedDuration = Math.max(0, end - start);
 
   return (
