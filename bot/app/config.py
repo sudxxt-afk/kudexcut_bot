@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     max_file_size_bytes: int = 20 * 1024 * 1024
     max_duration_seconds: float = 15 * 60
     session_ttl_seconds: int = 30 * 60
+    webhook_url: str = ""
+    webhook_secret: str = ""
+    webhook_port: int = 8081
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

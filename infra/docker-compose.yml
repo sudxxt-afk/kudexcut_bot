@@ -4,6 +4,14 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   api:
     build:
@@ -15,7 +23,12 @@ services:
     volumes:
       - videocut_tmp:/tmp/videocut
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       - redis
 
@@ -31,8 +44,13 @@ services:
       MAX_FILE_SIZE_BYTES: ${MAX_FILE_SIZE_BYTES}
       MAX_DURATION_SECONDS: ${MAX_DURATION_SECONDS}
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-8081}
     volumes:
       - videocut_tmp:/tmp/videocut
+    ports:
+      - "127.0.0.1:8081:8081"
     depends_on:
       - api
       - redis
@@ -55,9 +73,10 @@ services:
     build:
       context: ../miniapp
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       - api
 
 volumes:
   videocut_tmp:
+  redis_data:
