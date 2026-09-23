@@ -9,6 +9,7 @@ services:
     build:
       context: ../backend
     environment:
+      BOT_TOKEN: ${BOT_TOKEN}
       REDIS_URL: redis://redis:6379/0
       TEMP_DIR: /tmp/videocut
     volumes:

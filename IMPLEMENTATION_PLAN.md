@@ -194,17 +194,46 @@ make test
 - `docker-compose config` корректно разбирает Compose-файл;
 - `git diff --check` не находит ошибок whitespace.
 
-Полный запуск сервисов пока не подтверждён из-за инфраструктурного ограничения: текущий OpenCode работает внутри Debian-контейнера, а Fedora использует внешний rootless Podman socket; legacy `docker-compose` не поддерживает используемую схему Podman API, а локальный Podman внутри Debian не имеет необходимых subuid/subgid.
+Полный запуск локального Podman-окружения ограничен вложенной средой OpenCode, поэтому текущие контейнерные проверки выполняются на сервере с Docker Compose. Серверный runtime успешно собирает и запускает API, Redis и Mini App.
+
+### 3.8. Реализован API-срез следующего этапа
+
+Добавлено:
+
+- проверка Telegram Web App `initData` через HMAC-SHA256;
+- проверка возраста `auth_date`;
+- извлечение Telegram user ID;
+- Redis-backed API session store;
+- `GET /api/sessions/{session_id}`;
+- `GET /api/sessions/{session_id}/video`;
+- `GET /api/sessions/{session_id}/status`;
+- `POST /api/sessions/{session_id}/trim` с серверной валидацией диапазона;
+- запрет доступа к чужой сессии;
+- проверка существования временного файла;
+- nginx proxy `/api` из Mini App в backend;
+- реальный video preview в Mini App;
+- два range-контрола и числовой ввод start/end;
+- состояния загрузки, ошибки и отправки диапазона;
+- автотесты API и Telegram authentication.
+
+Проверки на сервере:
+
+```text
+backend: 13 passed
+bot:     24 passed
+Mini App: Vite production build passed
+API smoke: GET /health → {"status":"ok"}
+API auth smoke: missing init data → HTTP 401
+```
 
 ## 4. Что пока не реализовано
 
 На текущем этапе отсутствуют:
 
-- Redis-интеграция API;
-- передача сессии из API в Mini App;
-- Telegram Web App authentication;
-- выдача видео в API;
-- Mini App editor;
+- очередь обработки и полноценный FFmpeg worker;
+- отправка результата обратно в Telegram;
+- cleanup job для файлов после TTL;
+- расширенный production deployment;
 - timeline;
 - выбор диапазона;
 - FFmpeg worker;
