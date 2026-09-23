@@ -43,6 +43,29 @@ def test_validate_init_data_rejects_bad_signature() -> None:
         validate_init_data(data, bot_token="bot-token", max_age_seconds=60, now=1_700_000_030)
 
 
+def test_validate_init_data_rejects_duplicate_parameters() -> None:
+    token = "bot-token"
+    with pytest.raises(TelegramAuthError, match="Malformed"):
+        validate_init_data(
+            f"{make_init_data(token)}&auth_date=1700000000",
+            bot_token=token,
+            max_age_seconds=60,
+            now=1_700_000_030,
+        )
+
+
+def test_validate_init_data_rejects_non_object_user() -> None:
+    token = "bot-token"
+    values = {"auth_date": "1700000000", "user": "[]"}
+    data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(values.items()))
+    secret_key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+    values["hash"] = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    with pytest.raises(TelegramAuthError, match="Malformed"):
+        validate_init_data(
+            urlencode(values), bot_token=token, max_age_seconds=60, now=1_700_000_030
+        )
+
+
 def test_validate_init_data_rejects_expired_data() -> None:
     with pytest.raises(TelegramAuthError, match="Expired"):
         validate_init_data(

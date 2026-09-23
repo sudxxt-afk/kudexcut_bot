@@ -28,10 +28,15 @@ def validate_init_data(
         raise TelegramAuthError("Missing Telegram init data")
 
     try:
-        values = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+        pairs = parse_qsl(init_data, keep_blank_values=True, strict_parsing=True)
+        if len({key for key, _ in pairs}) != len(pairs):
+            raise ValueError("duplicate init data parameter")
+        values = dict(pairs)
         received_hash = values.pop("hash")
         auth_date = int(values["auth_date"])
         user_payload = json.loads(values["user"])
+        if not isinstance(user_payload, dict):
+            raise TypeError("user must be an object")
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise TelegramAuthError("Malformed Telegram init data") from exc
 

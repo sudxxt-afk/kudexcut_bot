@@ -7,9 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     bot_token: str = Field(min_length=1)
     redis_url: str = "redis://redis:6379/0"
-    mini_app_url: str = "http://localhost:8080"
+    mini_app_url: str = "https://example.invalid"
     temp_dir: Path = Path("/tmp/videocut")
-    max_file_size_bytes: int = 500 * 1024 * 1024
+    max_file_size_bytes: int = 20 * 1024 * 1024
     max_duration_seconds: float = 15 * 60
     session_ttl_seconds: int = 30 * 60
 

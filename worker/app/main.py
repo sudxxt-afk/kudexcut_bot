@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     temp_dir: Path = Path("/tmp/videocut")
     ffmpeg_timeout_seconds: int = 600
+    max_output_size_bytes: int = 50 * 1024 * 1024
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
@@ -94,6 +95,8 @@ async def process_job(job: TrimJob, redis: Redis, bot: Bot, settings: Settings) 
     try:
         await update_status(redis, job.session_id, "processing")
         await run_ffmpeg(job, output_path, settings.ffmpeg_timeout_seconds)
+        if output_path.stat().st_size > settings.max_output_size_bytes:
+            raise RuntimeError("Processed video exceeds Telegram size limit")
         await update_status(redis, job.session_id, "sending")
         await bot.send_video(
             chat_id=job.chat_id,

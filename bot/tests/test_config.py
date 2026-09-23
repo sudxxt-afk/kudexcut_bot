@@ -11,9 +11,9 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.redis_url == "redis://redis:6379/0"
-    assert settings.mini_app_url == "http://localhost:8080"
+    assert settings.mini_app_url == "https://example.invalid"
     assert settings.temp_dir == Path("/tmp/videocut")
-    assert settings.max_file_size_bytes == 500 * 1024 * 1024
+    assert settings.max_file_size_bytes == 20 * 1024 * 1024
     assert settings.max_duration_seconds == 900
     assert settings.session_ttl_seconds == 1800
 

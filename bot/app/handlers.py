@@ -113,6 +113,8 @@ def register_handlers(
             await message.answer("Не удалось прочитать видео. Попробуй другой файл.")
         except Exception:
             logger.exception("Failed to create video session")
+            if session_dir is None and final_dir is not None:
+                await session_service.delete(session.session_id)
             await message.answer("Не удалось принять видео. Попробуй ещё раз.")
         finally:
             for directory in (session_dir, final_dir):

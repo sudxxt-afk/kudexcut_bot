@@ -39,7 +39,14 @@ async def probe_video(path: Path, *, timeout_seconds: int = 30) -> MediaMetadata
         stdout, stderr = await asyncio.wait_for(
             process.communicate(), timeout=timeout_seconds
         )
-    except (TimeoutError, OSError) as exc:
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        try:
+            await process.communicate()
+        except (asyncio.TimeoutError, OSError):
+            pass
+        raise MediaValidationError("Unable to inspect video") from exc
+    except OSError as exc:
         raise MediaValidationError("Unable to inspect video") from exc
 
     if process.returncode != 0:

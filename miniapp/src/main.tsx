@@ -37,6 +37,7 @@ function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const sessionId = params.get('session');
   const [session, setSession] = useState<Session | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +81,11 @@ function App() {
     }
 
     const initData = window.Telegram?.WebApp.initData ?? '';
+    if (!initData) {
+      setError('Открой редактор через Telegram.');
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     fetch(`/api/sessions/${sessionId}`, {
       headers: { 'X-Telegram-Init-Data': initData },
@@ -90,8 +96,15 @@ function App() {
         }
         return response.json() as Promise<Session>;
       })
-      .then((data) => {
+      .then(async (data) => {
         if (cancelled) return;
+        const videoResponse = await fetch(data.video_url, {
+          headers: { 'X-Telegram-Init-Data': initData },
+        });
+        if (!videoResponse.ok) throw new Error('Не удалось загрузить видео');
+        const videoBlob = await videoResponse.blob();
+        if (cancelled) return;
+        setVideoUrl(URL.createObjectURL(videoBlob));
         setSession(data);
         setEnd(data.duration_seconds);
       })
@@ -103,6 +116,10 @@ function App() {
       });
     return () => {
       cancelled = true;
+      setVideoUrl((currentUrl) => {
+        if (currentUrl) URL.revokeObjectURL(currentUrl);
+        return null;
+      });
     };
   }, [sessionId]);
 
@@ -138,7 +155,7 @@ function App() {
   return (
     <main className="editor">
       <header><h1>Обрезка видео</h1><span>{session.width}×{session.height}</span></header>
-      <video className="preview" controls src={session.video_url} />
+      <video className="preview" controls src={videoUrl ?? undefined} />
       <section className="range-card">
         <div className="timeline-labels"><span>{formatTime(start)}</span><span>{formatTime(end)}</span></div>
         <input aria-label="Начало фрагмента" type="range" min={0} max={session.duration_seconds} step={0.1} value={start} onChange={(event) => setStart(Math.min(Number(event.target.value), end - 0.1))} />

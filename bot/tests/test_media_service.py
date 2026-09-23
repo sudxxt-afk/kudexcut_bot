@@ -1,7 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -14,6 +14,7 @@ class FakeProcess:
         self._stdout = stdout
         self._stderr = stderr
         self.communicate = AsyncMock(return_value=(stdout, stderr))
+        self.kill = Mock()
 
 
 @pytest.mark.asyncio
@@ -71,6 +72,7 @@ async def test_probe_video_wraps_timeout() -> None:
     ):
         with pytest.raises(MediaValidationError, match="Unable to inspect video"):
             await probe_video(Path("input.mp4"))
+    process.kill.assert_called_once()
 
 
 @pytest.mark.asyncio

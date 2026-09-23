@@ -45,6 +45,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       TEMP_DIR: /tmp/videocut
       FFMPEG_TIMEOUT_SECONDS: ${FFMPEG_TIMEOUT_SECONDS}
+      MAX_OUTPUT_SIZE_BYTES: ${MAX_OUTPUT_SIZE_BYTES:-52428800}
     volumes:
       - videocut_tmp:/tmp/videocut
     depends_on:
