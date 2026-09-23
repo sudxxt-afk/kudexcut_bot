@@ -1,0 +1,46 @@
+version: "3.3"
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../backend
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      TEMP_DIR: /tmp/videocut
+    volumes:
+      - videocut_tmp:/tmp/videocut
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  bot:
+    build:
+      context: ../bot
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      API_URL: http://api:8000
+      REDIS_URL: redis://redis:6379/0
+      MINI_APP_URL: ${MINI_APP_URL}
+      TEMP_DIR: /tmp/videocut
+      MAX_FILE_SIZE_BYTES: ${MAX_FILE_SIZE_BYTES}
+      MAX_DURATION_SECONDS: ${MAX_DURATION_SECONDS}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS}
+    volumes:
+      - videocut_tmp:/tmp/videocut
+    depends_on:
+      - api
+      - redis
+
+  miniapp:
+    build:
+      context: ../miniapp
+    ports:
+      - "8080:80"
+
+volumes:
+  videocut_tmp:
