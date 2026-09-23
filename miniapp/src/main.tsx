@@ -311,21 +311,22 @@ function App() {
     <main className="editor-shell">
       <header className="editor-header">
         <button className="icon-button" aria-label="Закрыть редактор" onClick={() => window.Telegram?.WebApp.close()}>×</button>
-        <div className="title-block"><strong>Обрезка</strong><span>{session.file_name}</span></div>
-        <span className="resolution">{session.width}×{session.height}</span>
+        <div className="title-block"><strong>Обрезать видео</strong><span>{session.file_name}</span></div>
+        <span className="clip-badge">{formatTime(selectedDuration)}</span>
       </header>
 
       <section className="preview-stage">
         <video ref={videoRef} className="preview" src={videoUrl ?? undefined} playsInline preload="metadata" />
-        {!isPlaying && <button className="preview-play" aria-label="Воспроизвести" onClick={togglePlay}>▶</button>}
-        <div className="preview-time">{formatTime(currentTime)} <span>/</span> {formatTime(duration)}</div>
+        <button className={`preview-play ${isPlaying ? 'is-playing' : ''}`} aria-label={isPlaying ? 'Пауза' : 'Воспроизвести'} onClick={togglePlay}>
+          {isPlaying ? 'Ⅱ' : '▶'}
+        </button>
+        <div className="preview-time"><b>{formatTime(currentTime)}</b><span>/ {formatTime(duration)}</span></div>
       </section>
 
       <section className="editor-controls">
         <div className="timeline-toolbar">
-          <span className="eyebrow">Фрагмент</span>
-          <strong>{formatTime(selectedDuration)}</strong>
-          <span className="timeline-range">{formatTime(start)} — {formatTime(end)}</span>
+          <div><span className="eyebrow">Выберите фрагмент</span><strong>{formatTime(start)} — {formatTime(end)}</strong></div>
+          <span className="selected-duration">{formatTime(selectedDuration)}</span>
         </div>
         <div
           ref={timelineRef}
@@ -350,10 +351,12 @@ function App() {
         <div className="timeline-scale"><span>00:00</span><span>{formatTime(duration)}</span></div>
       </section>
 
-      <section className="precision-row">
-        <label>Начало<input type="number" min={0} max={end - MIN_CLIP_DURATION} step={0.1} value={start} onChange={(event) => setStartValue(Number(event.target.value))} /></label>
-        <button className="preview-button" onClick={previewClip} aria-label="Предпросмотр выбранного фрагмента">{isPlaying && previewSelection ? '■' : '▶'} <span>Предпросмотр</span></button>
-        <label>Конец<input type="number" min={start + MIN_CLIP_DURATION} max={duration} step={0.1} value={end} onChange={(event) => setEndValue(Number(event.target.value))} /></label>
+      <section className="tools-row">
+        <button className={`tool-button ${isPlaying && previewSelection ? 'active' : ''}`} onClick={previewClip} aria-label="Предпросмотр выбранного фрагмента">
+          <span className="tool-icon">{isPlaying && previewSelection ? '■' : '▶'}</span><span>Просмотр</span>
+        </button>
+        <label className="time-field"><span>Начало</span><input type="number" min={0} max={end - MIN_CLIP_DURATION} step={0.1} value={start} onChange={(event) => setStartValue(Number(event.target.value))} /></label>
+        <label className="time-field"><span>Конец</span><input type="number" min={start + MIN_CLIP_DURATION} max={duration} step={0.1} value={end} onChange={(event) => setEndValue(Number(event.target.value))} /></label>
       </section>
 
       <div className="bottom-bar">
