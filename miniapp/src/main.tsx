@@ -1,4 +1,5 @@
-import { StrictMode, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -17,6 +18,7 @@ type Session = {
 type TelegramWebApp = {
   initData: string;
   ready: () => void;
+  expand?: () => void;
   close: () => void;
 };
 
@@ -26,6 +28,13 @@ declare global {
   }
 }
 
+const MIN_CLIP_DURATION = 0.1;
+const THUMBNAIL_COUNT = 9;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 function formatTime(seconds: number): string {
   const safeSeconds = Math.max(0, seconds);
   const minutes = Math.floor(safeSeconds / 60);
@@ -33,17 +42,123 @@ function formatTime(seconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${remainder}`;
 }
 
+function normalizeTime(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const sessionId = params.get('session');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [thumbnails, setThumbnails] = useState<string[]>([]);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [previewSelection, setPreviewSelection] = useState(false);
+  const [dragging, setDragging] = useState<'start' | 'end' | 'playhead' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    window.Telegram?.WebApp.ready();
+    window.Telegram?.WebApp.expand?.();
+    if (!sessionId) {
+      setError('Сессия редактора не найдена. Отправь видео боту заново.');
+      setLoading(false);
+      return;
+    }
+
+    const initData = window.Telegram?.WebApp.initData ?? '';
+    if (!initData) {
+      setError('Открой редактор через Telegram.');
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    fetch(`/api/sessions/${sessionId}`, { headers: { 'X-Telegram-Init-Data': initData } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error((await response.json()).detail ?? 'Не удалось открыть видео');
+        return response.json() as Promise<Session>;
+      })
+      .then(async (data) => {
+        const videoResponse = await fetch(data.video_url, {
+          headers: { 'X-Telegram-Init-Data': initData },
+        });
+        if (!videoResponse.ok) throw new Error('Не удалось загрузить видео');
+        const videoBlob = await videoResponse.blob();
+        if (cancelled) return;
+        setSession(data);
+        setDuration(data.duration_seconds);
+        setStart(0);
+        setEnd(data.duration_seconds);
+        setVideoUrl(URL.createObjectURL(videoBlob));
+      })
+      .catch((reason: Error) => {
+        if (!cancelled) setError(reason.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      setVideoUrl((currentUrl) => {
+        if (currentUrl) URL.revokeObjectURL(currentUrl);
+        return null;
+      });
+      thumbnails.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!videoUrl || !duration) return;
+    let cancelled = false;
+    const source = document.createElement('video');
+    source.src = videoUrl;
+    source.muted = true;
+    source.preload = 'auto';
+    const canvas = document.createElement('canvas');
+    canvas.width = 180;
+    canvas.height = 110;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    const createStrip = async () => {
+      await new Promise<void>((resolve) => {
+        source.addEventListener('loadeddata', () => resolve(), { once: true });
+        source.load();
+      });
+      const urls: string[] = [];
+      for (let index = 0; index < THUMBNAIL_COUNT && !cancelled; index += 1) {
+        source.currentTime = (duration * index) / Math.max(THUMBNAIL_COUNT - 1, 1);
+        await new Promise<void>((resolve) => {
+          source.addEventListener('seeked', () => resolve(), { once: true });
+        });
+        context.drawImage(source, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.7));
+        if (blob) urls.push(URL.createObjectURL(blob));
+      }
+      if (!cancelled) setThumbnails(urls);
+      else urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+    void createStrip();
+    return () => {
+      cancelled = true;
+      source.pause();
+      setThumbnails((current) => {
+        current.forEach((url) => URL.revokeObjectURL(url));
+        return [];
+      });
+    };
+  }, [duration, videoUrl]);
 
   useEffect(() => {
     if (!sessionId || !processingStatus || ['completed', 'failed'].includes(processingStatus)) return;
@@ -66,65 +181,102 @@ function App() {
         }
       }
     }, 1500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [processingStatus, sessionId]);
 
   useEffect(() => {
-    window.Telegram?.WebApp.ready();
-    if (!sessionId) {
-      setError('Сессия редактора не найдена. Отправь видео боту заново.');
-      setLoading(false);
-      return;
-    }
-
-    const initData = window.Telegram?.WebApp.initData ?? '';
-    if (!initData) {
-      setError('Открой редактор через Telegram.');
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    fetch(`/api/sessions/${sessionId}`, {
-      headers: { 'X-Telegram-Init-Data': initData },
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error((await response.json()).detail ?? 'Не удалось открыть видео');
-        }
-        return response.json() as Promise<Session>;
-      })
-      .then(async (data) => {
-        if (cancelled) return;
-        const videoResponse = await fetch(data.video_url, {
-          headers: { 'X-Telegram-Init-Data': initData },
-        });
-        if (!videoResponse.ok) throw new Error('Не удалось загрузить видео');
-        const videoBlob = await videoResponse.blob();
-        if (cancelled) return;
-        setVideoUrl(URL.createObjectURL(videoBlob));
-        setSession(data);
-        setEnd(data.duration_seconds);
-      })
-      .catch((reason: Error) => {
-        if (!cancelled) setError(reason.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-      setVideoUrl((currentUrl) => {
-        if (currentUrl) URL.revokeObjectURL(currentUrl);
-        return null;
-      });
+    const video = videoRef.current;
+    if (!video) return;
+    const onTimeUpdate = () => {
+      setCurrentTime(video.currentTime);
+      if (previewSelection && video.currentTime >= end - 0.03) {
+        video.pause();
+        video.currentTime = end;
+        setPreviewSelection(false);
+      }
     };
-  }, [sessionId]);
+    const onLoadedMetadata = () => {
+      const actualDuration = Number.isFinite(video.duration) ? video.duration : duration;
+      setDuration(actualDuration);
+      setEnd((value) => Math.min(value || actualDuration, actualDuration));
+    };
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('play', onPlay);
+    video.addEventListener('pause', onPause);
+    return () => {
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('pause', onPause);
+    };
+  }, [duration, end, previewSelection]);
+
+  function timeFromPointer(clientX: number): number {
+    const rect = timelineRef.current?.getBoundingClientRect();
+    if (!rect || !duration) return 0;
+    return normalizeTime(clamp(((clientX - rect.left) / rect.width) * duration, 0, duration));
+  }
+
+  function updateFromPointer(clientX: number) {
+    const value = timeFromPointer(clientX);
+    if (dragging === 'start') setStart(Math.min(value, end - MIN_CLIP_DURATION));
+    if (dragging === 'end') setEnd(Math.max(value, start + MIN_CLIP_DURATION));
+    if (dragging === 'playhead') seek(value);
+  }
+
+  function seek(value: number) {
+    const next = clamp(value, 0, duration);
+    setCurrentTime(next);
+    if (videoRef.current) videoRef.current.currentTime = next;
+  }
+
+  function togglePlay() {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) void video.play();
+    else video.pause();
+  }
+
+  function previewClip() {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = start;
+    setCurrentTime(start);
+    setPreviewSelection(true);
+    void video.play();
+  }
+
+  function handleTimelinePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if ((event.target as HTMLElement).dataset.handle) return;
+    timelineRef.current?.setPointerCapture(event.pointerId);
+    setDragging('playhead');
+    updateFromPointer(event.clientX);
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragging) updateFromPointer(event.clientX);
+  }
+
+  function handlePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    timelineRef.current?.releasePointerCapture(event.pointerId);
+    setDragging(null);
+  }
+
+  function setStartValue(value: number) {
+    if (!Number.isFinite(value)) return;
+    setStart(clamp(normalizeTime(value), 0, Math.max(0, end - MIN_CLIP_DURATION)));
+  }
+
+  function setEndValue(value: number) {
+    if (!Number.isFinite(value)) return;
+    setEnd(clamp(normalizeTime(value), Math.min(duration, start + MIN_CLIP_DURATION), duration));
+  }
 
   async function submitTrim() {
-    if (!session || !sessionId) return;
+    if (!session || !sessionId || end <= start) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -136,9 +288,7 @@ function App() {
         },
         body: JSON.stringify({ start, end }),
       });
-      if (!response.ok) {
-        throw new Error((await response.json()).detail ?? 'Не удалось отправить задачу');
-      }
+      if (!response.ok) throw new Error((await response.json()).detail ?? 'Не удалось отправить задачу');
       const accepted = await response.json() as { status: string };
       setProcessingStatus(accepted.status);
     } catch (reason) {
@@ -152,17 +302,65 @@ function App() {
   if (error && !session) return <main className="state error">{error}</main>;
   if (!session) return <main className="state error">Сессия недоступна.</main>;
 
+  const startPercent = duration ? (start / duration) * 100 : 0;
+  const endPercent = duration ? (end / duration) * 100 : 100;
+  const playheadPercent = duration ? (currentTime / duration) * 100 : 0;
+  const selectedDuration = Math.max(0, end - start);
+
   return (
-    <main className="editor">
-      <header><h1>Обрезка видео</h1><span>{session.width}×{session.height}</span></header>
-      <video className="preview" controls src={videoUrl ?? undefined} />
-      <section className="range-card">
-        <div className="timeline-labels"><span>{formatTime(start)}</span><span>{formatTime(end)}</span></div>
-        <input aria-label="Начало фрагмента" type="range" min={0} max={session.duration_seconds} step={0.1} value={start} onChange={(event) => setStart(Math.min(Number(event.target.value), end - 0.1))} />
-        <input aria-label="Конец фрагмента" type="range" min={0} max={session.duration_seconds} step={0.1} value={end} onChange={(event) => setEnd(Math.max(Number(event.target.value), start + 0.1))} />
-        <div className="fields"><label>Начало<input type="number" min={0} max={end - 0.1} step={0.1} value={start} onChange={(event) => setStart(Number(event.target.value))} /></label><label>Конец<input type="number" min={start + 0.1} max={session.duration_seconds} step={0.1} value={end} onChange={(event) => setEnd(Number(event.target.value))} /></label></div>
+    <main className="editor-shell">
+      <header className="editor-header">
+        <button className="icon-button" aria-label="Закрыть редактор" onClick={() => window.Telegram?.WebApp.close()}>×</button>
+        <div className="title-block"><strong>Обрезка</strong><span>{session.file_name}</span></div>
+        <span className="resolution">{session.width}×{session.height}</span>
+      </header>
+
+      <section className="preview-stage">
+        <video ref={videoRef} className="preview" src={videoUrl ?? undefined} playsInline preload="metadata" />
+        {!isPlaying && <button className="preview-play" aria-label="Воспроизвести" onClick={togglePlay}>▶</button>}
+        <div className="preview-time">{formatTime(currentTime)} <span>/</span> {formatTime(duration)}</div>
       </section>
-      <button className="primary" disabled={submitting || processingStatus !== null || end <= start} onClick={submitTrim}>{submitting ? 'Отправляю…' : processingStatus ? `Обработка: ${processingStatus}` : 'Готово'}</button>
+
+      <section className="editor-controls">
+        <div className="timeline-toolbar">
+          <span className="eyebrow">Фрагмент</span>
+          <strong>{formatTime(selectedDuration)}</strong>
+          <span className="timeline-range">{formatTime(start)} — {formatTime(end)}</span>
+        </div>
+        <div
+          ref={timelineRef}
+          className={`timeline ${dragging ? 'is-dragging' : ''}`}
+          onPointerDown={handleTimelinePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+        >
+          <div className="filmstrip">
+            {thumbnails.length > 0
+              ? thumbnails.map((thumbnail, index) => <img key={thumbnail} src={thumbnail} alt={`Кадр ${index + 1}`} />)
+              : Array.from({ length: THUMBNAIL_COUNT }, (_, index) => <span className="thumbnail-placeholder" key={index} />)}
+          </div>
+          <div className="timeline-dim left" style={{ width: `${startPercent}%` }} />
+          <div className="timeline-dim right" style={{ width: `${100 - endPercent}%` }} />
+          <div className="selection" style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%` }} />
+          <button className="timeline-handle start-handle" data-handle="start" aria-label="Начало фрагмента" style={{ left: `${startPercent}%` }} onPointerDown={(event) => { event.stopPropagation(); timelineRef.current?.setPointerCapture(event.pointerId); setDragging('start'); }} />
+          <button className="timeline-handle end-handle" data-handle="end" aria-label="Конец фрагмента" style={{ left: `${endPercent}%` }} onPointerDown={(event) => { event.stopPropagation(); timelineRef.current?.setPointerCapture(event.pointerId); setDragging('end'); }} />
+          <button className="playhead" data-handle="playhead" aria-label="Позиция воспроизведения" style={{ left: `${playheadPercent}%` }} onPointerDown={(event) => { event.stopPropagation(); timelineRef.current?.setPointerCapture(event.pointerId); setDragging('playhead'); }} />
+        </div>
+        <div className="timeline-scale"><span>00:00</span><span>{formatTime(duration)}</span></div>
+      </section>
+
+      <section className="precision-row">
+        <label>Начало<input type="number" min={0} max={end - MIN_CLIP_DURATION} step={0.1} value={start} onChange={(event) => setStartValue(Number(event.target.value))} /></label>
+        <button className="preview-button" onClick={previewClip} aria-label="Предпросмотр выбранного фрагмента">{isPlaying && previewSelection ? '■' : '▶'} <span>Предпросмотр</span></button>
+        <label>Конец<input type="number" min={start + MIN_CLIP_DURATION} max={duration} step={0.1} value={end} onChange={(event) => setEndValue(Number(event.target.value))} /></label>
+      </section>
+
+      <div className="bottom-bar">
+        <button className="primary" disabled={submitting || processingStatus !== null || end <= start} onClick={submitTrim}>
+          {submitting ? 'Отправляю…' : processingStatus ? `Обработка: ${processingStatus}` : 'Готово'}
+        </button>
+      </div>
       {error && <p className="notice">{error}</p>}
     </main>
   );
