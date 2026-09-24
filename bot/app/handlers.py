@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
 from .config import Settings
 from .media_service import MediaValidationError, extract_cover, probe_audio, probe_video
@@ -30,25 +30,6 @@ def register_handlers(
             "2. Выбери фрагмент в редакторе\n"
             "3. Забери готовый файл здесь\n\n"
             "<blockquote>Аудио сохраняет имя и обложку. Видео возвращается отдельным роликом.</blockquote>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="Как пользоваться", callback_data="help")],
-                ]
-            ),
-        )
-
-    @dispatcher.callback_query(F.data == "help")
-    async def show_help(query: CallbackQuery) -> None:
-        await query.answer()
-        if query.message is None:
-            return
-        await query.message.answer(
-            "<b>Как пользоваться</b>\n\n"
-            "Просто отправь файл в этот чат. Я проверю его и дам кнопку редактора.\n\n"
-            "• Аудио: mp3 и другие звуковые файлы\n"
-            "• Видео: ролик или видеодокумент\n"
-            "• В редакторе двигай края фрагмента и нажми «Сохранить фрагмент»",
             parse_mode="HTML",
         )
 
