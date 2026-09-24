@@ -18,7 +18,8 @@ class MediaSession:
     duration_seconds: float
     width: int
     height: int
-    created_at: str
+    media_type: str = "video"
+    created_at: str = ""
     status: str = "editing"
 
 
@@ -86,6 +87,7 @@ def session_metadata(session: MediaSession) -> dict[str, object]:
         "duration_seconds": session.duration_seconds,
         "width": session.width,
         "height": session.height,
-        "status": session.status,
+        "media_type": session.media_type,
+        "media_url": f"/api/sessions/{session.session_id}/media",
         "video_url": f"/api/sessions/{session.session_id}/video",
     }

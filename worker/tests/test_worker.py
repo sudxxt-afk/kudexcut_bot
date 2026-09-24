@@ -63,3 +63,35 @@ async def test_run_ffmpeg_kills_process_on_timeout(tmp_path: Path) -> None:
             )
 
     process.kill.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_ffmpeg_audio_command(tmp_path: Path) -> None:
+    output_path = tmp_path / "output.mp3"
+    output_path.write_bytes(b"audio")
+    process = type("Process", (), {"returncode": 0})()
+    process.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch(
+        "app.main.asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=process),
+    ) as create_process:
+        await run_ffmpeg(
+            TrimJob(
+                session_id="session",
+                telegram_user_id=1,
+                chat_id=2,
+                input_path=tmp_path / "input.mp3",
+                media_type="audio",
+                start=2,
+                end=5,
+            ),
+            output_path,
+            timeout=30,
+        )
+
+    command = create_process.await_args.args
+    assert "-vn" in command
+    assert "libmp3lame" in command
+    assert "0:v:0" not in command
+    assert str(output_path) in command

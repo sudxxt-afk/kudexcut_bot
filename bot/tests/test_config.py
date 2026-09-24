@@ -7,6 +7,15 @@ from app.config import Settings
 
 
 def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "MINI_APP_URL",
+        "MAX_FILE_SIZE_BYTES",
+        "MAX_DURATION_SECONDS",
+        "SESSION_TTL_SECONDS",
+        "REDIS_URL",
+        "TEMP_DIR",
+    ):
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("BOT_TOKEN", "test-token")
     settings = Settings(_env_file=None)
 

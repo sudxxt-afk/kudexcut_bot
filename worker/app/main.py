@@ -28,15 +28,21 @@ class TrimJob(BaseModel):
     telegram_user_id: int
     chat_id: int
     input_path: Path
+    media_type: str = "video"
     start: float = Field(ge=0)
     end: float = Field(gt=0)
 
 
 async def run_ffmpeg(job: TrimJob, output_path: Path, timeout: int) -> None:
     duration = job.end - job.start
-    command = [
-        "ffmpeg",
-        "-y",
+    if job.media_type == "audio":
+        command = [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(job.start),
+            "-i", str(job.input_path), "-t", str(duration), "-vn", "-c:a", "libmp3lame", str(output_path),
+        ]
+    else:
+        command = [
+            "ffmpeg",
         "-hide_banner",
         "-loglevel",
         "error",
@@ -91,18 +97,23 @@ async def update_status(redis: Redis, session_id: str, status: str) -> None:
 async def process_job(job: TrimJob, redis: Redis, bot: Bot, settings: Settings) -> None:
     input_path = job.input_path
     session_dir = input_path.parent
-    output_path = session_dir / "output.mp4"
+    output_path = session_dir / ("output.mp3" if job.media_type == "audio" else "output.mp4")
     try:
         await update_status(redis, job.session_id, "processing")
         await run_ffmpeg(job, output_path, settings.ffmpeg_timeout_seconds)
         if output_path.stat().st_size > settings.max_output_size_bytes:
             raise RuntimeError("Processed video exceeds Telegram size limit")
         await update_status(redis, job.session_id, "sending")
-        await bot.send_video(
-            chat_id=job.chat_id,
-            video=FSInputFile(output_path),
-            caption="Готово. Вот обрезанное видео.",
-        )
+        if job.media_type == "audio":
+            await bot.send_audio(
+                chat_id=job.chat_id, audio=FSInputFile(output_path), caption="Готово. Вот обрезанное аудио."
+            )
+        else:
+            await bot.send_video(
+                chat_id=job.chat_id,
+                video=FSInputFile(output_path),
+                caption="Готово. Вот обрезанное видео.",
+            )
         await update_status(redis, job.session_id, "completed")
     except Exception:
         logger.exception("Failed to process job %s", job.session_id)

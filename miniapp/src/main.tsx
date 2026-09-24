@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -12,6 +12,8 @@ type Session = {
   width: number;
   height: number;
   status: string;
+  media_type: 'video' | 'audio';
+  media_url: string;
   video_url: string;
 };
 
@@ -49,7 +51,7 @@ function normalizeTime(value: number): number {
 function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const sessionId = params.get('session');
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaRef = useRef<HTMLMediaElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -96,7 +98,7 @@ function App() {
         setEnd(data.duration_seconds);
         setLoading(false);
 
-        void fetch(data.video_url, {
+        void fetch(data.media_url, {
           headers: { 'X-Telegram-Init-Data': initData },
         })
           .then(async (videoResponse) => {
@@ -126,7 +128,7 @@ function App() {
   }, [sessionId]);
 
   useEffect(() => {
-    if (!videoUrl || !duration) return;
+    if (!videoUrl || !duration || session?.media_type !== 'video') return;
     let cancelled = false;
     const source = document.createElement('video');
     source.src = videoUrl;
@@ -165,7 +167,7 @@ function App() {
         return [];
       });
     };
-  }, [duration, videoUrl]);
+  }, [duration, videoUrl, session?.media_type]);
 
   useEffect(() => {
     if (!sessionId || !processingStatus || ['completed', 'failed'].includes(processingStatus)) return;
@@ -192,7 +194,7 @@ function App() {
   }, [processingStatus, sessionId]);
 
   useEffect(() => {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     const onTimeUpdate = () => {
       setCurrentTime(video.currentTime);
@@ -237,18 +239,18 @@ function App() {
   function seek(value: number) {
     const next = clamp(value, start, end);
     setCurrentTime(next);
-    if (videoRef.current) videoRef.current.currentTime = next;
+    if (mediaRef.current) mediaRef.current.currentTime = next;
   }
 
   function togglePlay() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     if (video.paused) void video.play();
     else video.pause();
   }
 
   function previewClip() {
-    const video = videoRef.current;
+    const video = mediaRef.current;
     if (!video) return;
     video.currentTime = start;
     setCurrentTime(start);
@@ -322,8 +324,15 @@ function App() {
         <span className="clip-badge">{formatTime(selectedDuration)}</span>
       </header>
 
-      <section className="preview-stage">
-        <video ref={videoRef} className="preview" src={videoUrl ?? undefined} playsInline preload="metadata" />
+      <section className={`preview-stage ${session.media_type === 'audio' ? 'audio-stage' : ''}`}>
+        {session.media_type === 'audio' ? (
+          <>
+            <div className="audio-art"><span>♪</span><small>{session.file_name}</small></div>
+            <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={videoUrl ?? undefined} preload="metadata" />
+          </>
+        ) : (
+          <video ref={mediaRef as RefObject<HTMLVideoElement>} className="preview" src={videoUrl ?? undefined} playsInline preload="metadata" />
+        )}
         <button className={`preview-play ${isPlaying ? 'is-playing' : ''}`} aria-label={isPlaying ? 'Пауза' : 'Воспроизвести'} onClick={togglePlay}>
           {isPlaying ? 'Ⅱ' : '▶'}
         </button>
@@ -344,7 +353,7 @@ function App() {
           onPointerCancel={handlePointerUp}
         >
           <div className="filmstrip">
-            {thumbnails.length > 0
+            {session.media_type === 'audio' ? <div className="waveform">{Array.from({ length: 56 }, (_, index) => <i key={index} style={{ height: `${20 + ((index * 17) % 58)}%` }} />)}</div> : thumbnails.length > 0
               ? thumbnails.map((thumbnail, index) => <img key={thumbnail} src={thumbnail} alt={`Кадр ${index + 1}`} />)
               : Array.from({ length: THUMBNAIL_COUNT }, (_, index) => <span className="thumbnail-placeholder" key={index} />)}
           </div>

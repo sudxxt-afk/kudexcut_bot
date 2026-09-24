@@ -8,7 +8,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
 from .config import Settings
-from .media_service import MediaValidationError, probe_video
+from .media_service import MediaValidationError, probe_audio, probe_video
 from .session_service import SessionService
 
 logger = logging.getLogger(__name__)
@@ -28,17 +28,16 @@ def register_handlers(
             "и я верну готовый файл сюда."
         )
 
-    @dispatcher.message(F.video | F.document)
-    async def receive_video(message: Message) -> None:
-        media = message.video or message.document
+    @dispatcher.message(F.audio | F.video | F.document)
+    async def receive_media(message: Message) -> None:
+        media = message.audio or message.video or message.document
         if media is None:
             return
-
-        mime_type = media.mime_type or "application/octet-stream"
-        if message.document and not mime_type.startswith("video/"):
-            await message.answer("Пожалуйста, отправь видеофайл.")
+        media_type = "audio" if message.audio or (message.document and (media.mime_type or "").startswith("audio/")) else "video"
+        mime_type = media.mime_type or ("audio/mpeg" if media_type == "audio" else "video/mp4")
+        if message.document and media_type == "video" and not mime_type.startswith("video/"):
+            await message.answer("Пожалуйста, отправь аудио или видеофайл.")
             return
-
         file_size = media.file_size
         if file_size is not None and file_size > settings.max_file_size_bytes:
             await message.answer(
@@ -49,7 +48,7 @@ def register_handlers(
         user_id = message.from_user.id if message.from_user else message.chat.id
         session_dir: Path | None = None
         final_dir: Path | None = None
-        await message.answer("Проверяю видео…")
+        await message.answer("Проверяю файл…")
 
         try:
             session_dir = settings.temp_dir / f"pending-{uuid4().hex}"
@@ -65,7 +64,7 @@ def register_handlers(
                 )
                 return
 
-            metadata = await probe_video(source_path)
+            metadata = await (probe_audio(source_path) if media_type == "audio" else probe_video(source_path))
             if metadata.duration_seconds > settings.max_duration_seconds:
                 limit_minutes = settings.max_duration_seconds / 60
                 await message.answer(
@@ -83,6 +82,7 @@ def register_handlers(
                 duration_seconds=metadata.duration_seconds,
                 width=metadata.width,
                 height=metadata.height,
+                media_type=media_type,
             )
             final_dir = settings.temp_dir / session.session_id
             session_dir.rename(final_dir)
@@ -105,7 +105,7 @@ def register_handlers(
                 ]
             )
             await message.answer(
-                "Видео готово. Открой редактор и выбери нужный фрагмент.",
+                ("Аудио готово. Открой редактор и выбери нужный фрагмент." if media_type == "audio" else "Видео готово. Открой редактор и выбери нужный фрагмент."),
                 reply_markup=keyboard,
             )
             final_dir = None

@@ -115,6 +115,7 @@ async def test_trim_validates_range(client) -> None:
         "telegram_user_id": 42,
         "chat_id": 99,
         "input_path": session_payload["file_path"],
+        "media_type": "video",
         "start": 10.0,
         "end": 20.0,
     }

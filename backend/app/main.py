@@ -81,8 +81,9 @@ async def get_session(
     return session_metadata(session)
 
 
+@app.get("/api/sessions/{session_id}/media")
 @app.get("/api/sessions/{session_id}/video")
-async def get_video(
+async def get_media(
     session_id: str,
     user: TelegramUser = Depends(current_user),
     store: SessionStore = Depends(get_session_store),
@@ -90,7 +91,7 @@ async def get_video(
     session = await owned_session(session_id, user, store)
     path = Path(session.file_path)
     if not path.is_file():
-        raise HTTPException(status_code=410, detail="Video file is no longer available")
+        raise HTTPException(status_code=410, detail="Media file is no longer available")
     return FileResponse(
         path,
         media_type=session.mime_type,
@@ -129,6 +130,7 @@ async def trim_video(
         "telegram_user_id": claimed.telegram_user_id,
         "chat_id": claimed.chat_id,
         "input_path": claimed.file_path,
+        "media_type": claimed.media_type,
         "start": payload.start,
         "end": payload.end,
     }
