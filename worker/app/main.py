@@ -118,15 +118,13 @@ async def process_job(job: TrimJob, redis: Redis, bot: Bot, settings: Settings) 
                 chat_id=job.chat_id,
                 audio=FSInputFile(output_path, filename=original_name),
                 title=title,
-                caption='<tg-emoji emoji-id="5312241539984503359">✨</tg-emoji> Готово. Вот обрезанное аудио.',
-                parse_mode="HTML",
+                caption="Готово. Вот обрезанное аудио.",
             )
         else:
             await bot.send_video(
                 chat_id=job.chat_id,
                 video=FSInputFile(output_path),
-                caption='<tg-emoji emoji-id="5312241539984503359">✨</tg-emoji> Готово. Вот обрезанное видео.',
-                parse_mode="HTML",
+                caption="Готово. Вот обрезанное видео.",
             )
         await update_status(redis, job.session_id, "completed")
     except Exception:

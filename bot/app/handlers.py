@@ -24,11 +24,8 @@ def register_handlers(
     @dispatcher.message(CommandStart())
     async def start(message: Message) -> None:
         await message.answer(
-            "<tg-emoji emoji-id=\"5312241539984503359\">✨</tg-emoji> "
-            "<b>Kudex Cut</b>\n"
-            "Кинь аудио или видео. Выбери фрагмент в редакторе, "
-            "и я верну готовый файл сюда.",
-            parse_mode="HTML",
+            "Привет! Отправь аудио или видео, выбери нужный фрагмент, "
+            "и я верну готовый файл сюда."
         )
 
     @dispatcher.message(F.audio | F.video | F.document)
@@ -112,11 +109,11 @@ def register_handlers(
                 ]
             )
             ready = (
-                '<tg-emoji emoji-id="5312241539984503359">🎧</tg-emoji> <b>Трек готов</b>\nОткрой редактор и выбери нужный фрагмент.'
+                "Аудио готово. Открой редактор и выбери нужный фрагмент."
                 if media_type == "audio"
-                else '<tg-emoji emoji-id="5312241539984503359">🎬</tg-emoji> <b>Видео готово</b>\nОткрой редактор и выбери нужный фрагмент.'
+                else "Видео готово. Открой редактор и выбери нужный фрагмент."
             )
-            await message.answer(ready, reply_markup=keyboard, parse_mode="HTML")
+            await message.answer(ready, reply_markup=keyboard)
             final_dir = None
         except MediaValidationError:
             await message.answer("Не удалось прочитать видео. Попробуй другой файл.")
