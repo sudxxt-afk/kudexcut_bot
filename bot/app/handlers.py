@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
 from .config import Settings
 from .media_service import MediaValidationError, extract_cover, probe_audio, probe_video
@@ -24,8 +24,32 @@ def register_handlers(
     @dispatcher.message(CommandStart())
     async def start(message: Message) -> None:
         await message.answer(
-            "Привет! Отправь аудио или видео, выбери нужный фрагмент, "
-            "и я верну готовый файл сюда."
+            "<b>Kudex Cut</b>\n"
+            "Обрежь трек или ролик и получи файл обратно в этот чат.\n\n"
+            "1. Отправь аудио или видео\n"
+            "2. Выбери фрагмент в редакторе\n"
+            "3. Забери готовый файл здесь\n\n"
+            "<blockquote>Аудио сохраняет имя и обложку. Видео возвращается отдельным роликом.</blockquote>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="Как пользоваться", callback_data="help")],
+                ]
+            ),
+        )
+
+    @dispatcher.callback_query(F.data == "help")
+    async def show_help(query: CallbackQuery) -> None:
+        await query.answer()
+        if query.message is None:
+            return
+        await query.message.answer(
+            "<b>Как пользоваться</b>\n\n"
+            "Просто отправь файл в этот чат. Я проверю его и дам кнопку редактора.\n\n"
+            "• Аудио: mp3 и другие звуковые файлы\n"
+            "• Видео: ролик или видеодокумент\n"
+            "• В редакторе двигай края фрагмента и нажми «Сохранить фрагмент»",
+            parse_mode="HTML",
         )
 
     @dispatcher.message(F.audio | F.video | F.document)
@@ -48,7 +72,7 @@ def register_handlers(
         user_id = message.from_user.id if message.from_user else message.chat.id
         session_dir: Path | None = None
         final_dir: Path | None = None
-        await message.answer("Проверяю файл…")
+        await message.answer("<b>Проверяю файл</b>\nСекунду, читаю длительность и обложку.", parse_mode="HTML")
 
         try:
             session_dir = settings.temp_dir / f"pending-{uuid4().hex}"
@@ -109,11 +133,11 @@ def register_handlers(
                 ]
             )
             ready = (
-                "Аудио готово. Открой редактор и выбери нужный фрагмент."
+                "<b>Трек готов</b>\nОткрой редактор и выбери нужный фрагмент."
                 if media_type == "audio"
-                else "Видео готово. Открой редактор и выбери нужный фрагмент."
+                else "<b>Видео готово</b>\nОткрой редактор и выбери нужный фрагмент."
             )
-            await message.answer(ready, reply_markup=keyboard)
+            await message.answer(ready, reply_markup=keyboard, parse_mode="HTML")
             final_dir = None
         except MediaValidationError:
             await message.answer("Не удалось прочитать видео. Попробуй другой файл.")
