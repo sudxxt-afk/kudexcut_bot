@@ -69,6 +69,7 @@ async def test_session_metadata(client) -> None:
     assert response.status_code == 200
     assert response.json()["duration_seconds"] == 60.0
     assert response.json()["video_url"].endswith("/video")
+    assert response.json()["cover_url"] is None
 
 
 @pytest.mark.asyncio
@@ -126,3 +127,25 @@ async def test_trim_validates_range(client) -> None:
         json={"start": 20, "end": 10},
     )
     assert invalid.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_audio_cover_is_returned_when_present(client, tmp_path: Path) -> None:
+    http_client, session_id, init_data = client
+    payload = json.loads(await app.state.redis.get(f"videocut:session:{session_id}"))
+    cover = Path(payload["file_path"]).parent / "cover.jpg"
+    cover.write_bytes(b"cover")
+    payload["media_type"] = "audio"
+    await app.state.redis.set(f"videocut:session:{session_id}", json.dumps(payload))
+
+    metadata = await http_client.get(
+        f"/api/sessions/{session_id}", headers={"X-Telegram-Init-Data": init_data}
+    )
+    assert metadata.status_code == 200
+    assert metadata.json()["cover_url"].endswith("/cover")
+
+    response = await http_client.get(
+        f"/api/sessions/{session_id}/cover", headers={"X-Telegram-Init-Data": init_data}
+    )
+    assert response.status_code == 200
+    assert response.content == b"cover"

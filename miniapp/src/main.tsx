@@ -15,6 +15,7 @@ type Session = {
   media_type: 'video' | 'audio';
   media_url: string;
   video_url: string;
+  cover_url?: string | null;
 };
 
 type TelegramWebApp = {
@@ -55,6 +56,7 @@ function App() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [thumbnails, setThumbnails] = useState<string[]>([]);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -97,6 +99,15 @@ function App() {
         setStart(0);
         setEnd(data.duration_seconds);
         setLoading(false);
+        if (data.cover_url) {
+          void fetch(data.cover_url, { headers: { 'X-Telegram-Init-Data': initData } })
+            .then(async (response) => {
+              if (!response.ok) return;
+              const blob = await response.blob();
+              if (!cancelled) setCoverUrl(URL.createObjectURL(blob));
+            })
+            .catch(() => undefined);
+        }
 
         void fetch(data.media_url, {
           headers: { 'X-Telegram-Init-Data': initData },
@@ -120,6 +131,10 @@ function App() {
     return () => {
       cancelled = true;
       setVideoUrl((currentUrl) => {
+        if (currentUrl) URL.revokeObjectURL(currentUrl);
+        return null;
+      });
+      setCoverUrl((currentUrl) => {
         if (currentUrl) URL.revokeObjectURL(currentUrl);
         return null;
       });
@@ -307,7 +322,7 @@ function App() {
     }
   }
 
-  if (loading) return <main className="state"><div className="loading-message">Загружаю видео<span className="loading-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></div></main>;
+  if (loading) return <main className="state"><div className="loader-card"><span className="loader-orb" /><div className="loading-message">Открываю редактор<span className="loading-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></div></div></main>;
   if (error && !session) return <main className="state error">{error}</main>;
   if (!session) return <main className="state error">Сессия недоступна.</main>;
 
@@ -320,14 +335,17 @@ function App() {
     <main className="editor-shell">
       <header className="editor-header">
         <button className="icon-button" aria-label="Закрыть редактор" onClick={() => window.Telegram?.WebApp.close()}>×</button>
-        <div className="title-block"><strong>Обрезать видео</strong><span>{session.file_name}</span></div>
+        <div className="title-block"><strong>{session.media_type === 'audio' ? 'Редактировать аудио' : 'Обрезать видео'}</strong><span>{session.file_name}</span></div>
         <span className="clip-badge">{formatTime(selectedDuration)}</span>
       </header>
 
       <section className={`preview-stage ${session.media_type === 'audio' ? 'audio-stage' : ''}`}>
         {session.media_type === 'audio' ? (
           <>
-            <div className="audio-art"><span>♪</span><small>{session.file_name}</small></div>
+            <div className="audio-art">
+              <div className="cover-frame">{coverUrl ? <img src={coverUrl} alt="Обложка" /> : <span>♪</span>}</div>
+              <small>{session.file_name}</small>
+            </div>
             <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={videoUrl ?? undefined} preload="metadata" />
           </>
         ) : (
@@ -341,7 +359,7 @@ function App() {
 
       <section className="editor-controls">
         <div className="timeline-toolbar">
-          <div><span className="eyebrow">Выберите фрагмент</span><strong>{formatTime(start)} — {formatTime(end)}</strong></div>
+          <div><span className="eyebrow">Фрагмент</span><strong>{formatTime(start)} — {formatTime(end)}</strong></div>
           <span className="selected-duration">{formatTime(selectedDuration)}</span>
         </div>
         <div
@@ -369,7 +387,7 @@ function App() {
 
       <section className="tools-row">
         <button className={`tool-button ${isPlaying && previewSelection ? 'active' : ''}`} onClick={previewClip} aria-label="Предпросмотр выбранного фрагмента">
-          <span className="tool-icon">{isPlaying && previewSelection ? '■' : '▶'}</span><span>Просмотр</span>
+          <span className="tool-icon">{isPlaying && previewSelection ? '■' : '▶'}</span><span>Прослушать</span>
         </button>
         <label className="time-field"><span>Начало</span><input type="number" min={0} max={end - MIN_CLIP_DURATION} step={0.1} value={start} onChange={(event) => setStartValue(Number(event.target.value))} /></label>
         <label className="time-field"><span>Конец</span><input type="number" min={start + MIN_CLIP_DURATION} max={duration} step={0.1} value={end} onChange={(event) => setEndValue(Number(event.target.value))} /></label>
@@ -377,7 +395,7 @@ function App() {
 
       <div className="bottom-bar">
         <button className="primary" disabled={submitting || processingStatus !== null || end <= start} onClick={submitTrim}>
-          {submitting ? 'Отправляю…' : processingStatus ? `Обработка: ${processingStatus}` : 'Готово'}
+          {submitting ? 'Отправляю…' : processingStatus ? `Обработка: ${processingStatus}` : 'Сохранить фрагмент'}
         </button>
       </div>
       {error && <p className="notice">{error}</p>}

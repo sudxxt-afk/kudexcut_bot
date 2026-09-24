@@ -8,7 +8,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
 from .config import Settings
-from .media_service import MediaValidationError, probe_audio, probe_video
+from .media_service import MediaValidationError, extract_cover, probe_audio, probe_video
 from .session_service import SessionService
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,11 @@ def register_handlers(
     @dispatcher.message(CommandStart())
     async def start(message: Message) -> None:
         await message.answer(
-            "Привет! Отправь мне видео, выбери нужный фрагмент, "
-            "и я верну готовый файл сюда."
+            "<tg-emoji emoji-id=\"5312241539984503359\">✨</tg-emoji> "
+            "<b>Kudex Cut</b>\n"
+            "Кинь аудио или видео. Выбери фрагмент в редакторе, "
+            "и я верну готовый файл сюда.",
+            parse_mode="HTML",
         )
 
     @dispatcher.message(F.audio | F.video | F.document)
@@ -72,11 +75,15 @@ def register_handlers(
                 )
                 return
 
+            if media_type == "audio":
+                await extract_cover(source_path, session_dir / "cover.jpg")
+
+            fallback_name = "audio.mp3" if media_type == "audio" else "video.mp4"
             session = await session_service.create(
                 telegram_user_id=user_id,
                 chat_id=message.chat.id,
                 source_path=source_path,
-                file_name=media.file_name or "video.mp4",
+                file_name=media.file_name or fallback_name,
                 mime_type=mime_type,
                 file_size=downloaded_size,
                 duration_seconds=metadata.duration_seconds,
@@ -104,10 +111,12 @@ def register_handlers(
                     ]
                 ]
             )
-            await message.answer(
-                ("Аудио готово. Открой редактор и выбери нужный фрагмент." if media_type == "audio" else "Видео готово. Открой редактор и выбери нужный фрагмент."),
-                reply_markup=keyboard,
+            ready = (
+                '<tg-emoji emoji-id="5312241539984503359">🎧</tg-emoji> <b>Трек готов</b>\nОткрой редактор и выбери нужный фрагмент.'
+                if media_type == "audio"
+                else '<tg-emoji emoji-id="5312241539984503359">🎬</tg-emoji> <b>Видео готово</b>\nОткрой редактор и выбери нужный фрагмент.'
             )
+            await message.answer(ready, reply_markup=keyboard, parse_mode="HTML")
             final_dir = None
         except MediaValidationError:
             await message.answer("Не удалось прочитать видео. Попробуй другой файл.")

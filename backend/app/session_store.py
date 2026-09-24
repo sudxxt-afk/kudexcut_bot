@@ -90,4 +90,9 @@ def session_metadata(session: MediaSession) -> dict[str, object]:
         "media_type": session.media_type,
         "media_url": f"/api/sessions/{session.session_id}/media",
         "video_url": f"/api/sessions/{session.session_id}/video",
+        "cover_url": (
+            f"/api/sessions/{session.session_id}/cover"
+            if session.media_type == "audio" and (Path(session.file_path).parent / "cover.jpg").is_file()
+            else None
+        ),
     }

@@ -105,14 +105,28 @@ async def process_job(job: TrimJob, redis: Redis, bot: Bot, settings: Settings) 
             raise RuntimeError("Processed video exceeds Telegram size limit")
         await update_status(redis, job.session_id, "sending")
         if job.media_type == "audio":
+            original_name = "audio.mp3"
+            title = "audio"
+            key = f"videocut:session:{job.session_id}"
+            raw = await redis.get(key)
+            if raw:
+                payload = json.loads(raw)
+                source_name = Path(str(payload.get("file_name") or original_name))
+                title = source_name.stem or title
+                original_name = f"{title}.mp3"
             await bot.send_audio(
-                chat_id=job.chat_id, audio=FSInputFile(output_path), caption="Готово. Вот обрезанное аудио."
+                chat_id=job.chat_id,
+                audio=FSInputFile(output_path, filename=original_name),
+                title=title,
+                caption='<tg-emoji emoji-id="5312241539984503359">✨</tg-emoji> Готово. Вот обрезанное аудио.',
+                parse_mode="HTML",
             )
         else:
             await bot.send_video(
                 chat_id=job.chat_id,
                 video=FSInputFile(output_path),
-                caption="Готово. Вот обрезанное видео.",
+                caption='<tg-emoji emoji-id="5312241539984503359">✨</tg-emoji> Готово. Вот обрезанное видео.',
+                parse_mode="HTML",
             )
         await update_status(redis, job.session_id, "completed")
     except Exception:

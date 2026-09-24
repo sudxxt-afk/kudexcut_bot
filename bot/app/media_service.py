@@ -46,6 +46,33 @@ async def probe_audio(path: Path, *, timeout_seconds: int = 30) -> MediaMetadata
         raise MediaValidationError("Audio metadata is invalid")
     return MediaMetadata(duration, 0, 0, "audio/mpeg")
 
+
+async def extract_cover(source_path: Path, cover_path: Path, *, timeout_seconds: int = 30) -> bool:
+    command = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(source_path), "-map", "0:v:0", "-an",
+        "-frames:v", "1", "-q:v", "3", str(cover_path),
+    ]
+    process: asyncio.subprocess.Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+    except (asyncio.TimeoutError, OSError):
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
+        cover_path.unlink(missing_ok=True)
+        return False
+    if process.returncode != 0 or not cover_path.is_file() or cover_path.stat().st_size == 0:
+        cover_path.unlink(missing_ok=True)
+        return False
+    return True
+
+
 async def probe_video(path: Path, *, timeout_seconds: int = 30) -> MediaMetadata:
     command = [
         "ffprobe", "-v", "error", "-select_streams", "v:0",

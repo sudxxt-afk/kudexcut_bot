@@ -99,6 +99,19 @@ async def get_media(
     )
 
 
+@app.get("/api/sessions/{session_id}/cover")
+async def get_cover(
+    session_id: str,
+    user: TelegramUser = Depends(current_user),
+    store: SessionStore = Depends(get_session_store),
+) -> FileResponse:
+    session = await owned_session(session_id, user, store)
+    path = Path(session.file_path).parent / "cover.jpg"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Cover is not available")
+    return FileResponse(path, media_type="image/jpeg", filename="cover.jpg")
+
+
 @app.get("/api/sessions/{session_id}/status")
 async def get_status(
     session_id: str,
