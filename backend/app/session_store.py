@@ -19,6 +19,8 @@ class MediaSession:
     width: int
     height: int
     media_type: str = "video"
+    title: str = ""
+    artist: str = ""
     created_at: str = ""
     status: str = "editing"
 
@@ -43,6 +45,16 @@ class SessionStore:
             return None
         payload = asdict(session)
         payload["status"] = status
+        ttl = await self._redis.ttl(self._key(session_id))
+        await self._redis.set(self._key(session_id), json.dumps(payload), ex=max(ttl, 1))
+        return MediaSession(**payload)
+
+    async def update_fields(self, session_id: str, **fields: str) -> MediaSession | None:
+        session = await self.get(session_id)
+        if session is None:
+            return None
+        payload = asdict(session)
+        payload.update(fields)
         ttl = await self._redis.ttl(self._key(session_id))
         await self._redis.set(self._key(session_id), json.dumps(payload), ex=max(ttl, 1))
         return MediaSession(**payload)
@@ -79,6 +91,7 @@ class SessionStore:
 
 
 def session_metadata(session: MediaSession) -> dict[str, object]:
+    cover = find_cover(Path(session.file_path).parent)
     return {
         "session_id": session.session_id,
         "file_name": session.file_name,
@@ -88,11 +101,20 @@ def session_metadata(session: MediaSession) -> dict[str, object]:
         "width": session.width,
         "height": session.height,
         "media_type": session.media_type,
+        "title": session.title,
+        "artist": session.artist,
         "media_url": f"/api/sessions/{session.session_id}/media",
         "video_url": f"/api/sessions/{session.session_id}/video",
-        "cover_url": (
-            f"/api/sessions/{session.session_id}/cover"
-            if session.media_type == "audio" and (Path(session.file_path).parent / "cover.jpg").is_file()
-            else None
-        ),
+        "cover_url": f"/api/sessions/{session.session_id}/cover" if session.media_type == "audio" and cover else None,
     }
+
+
+COVER_NAMES = ("cover.jpg", "cover.jpeg", "cover.png", "cover.webp")
+
+
+def find_cover(directory: Path) -> Path | None:
+    for name in COVER_NAMES:
+        path = directory / name
+        if path.is_file():
+            return path
+    return None

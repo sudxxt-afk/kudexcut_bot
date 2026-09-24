@@ -4,11 +4,11 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from redis.asyncio import Redis
 
 from .config import Settings
-from .session_store import MediaSession, SessionStore, session_metadata
+from .session_store import COVER_NAMES, MediaSession, SessionStore, find_cover, session_metadata
 from .telegram_auth import TelegramAuthError, TelegramUser, validate_init_data
 
 settings = Settings()
@@ -30,6 +30,13 @@ app = FastAPI(title="VideoCut API", version="0.2.0", lifespan=lifespan)
 class TrimRequest(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(gt=0)
+    title: str = Field(default="", max_length=120)
+    artist: str = Field(default="", max_length=120)
+
+    @field_validator("title", "artist")
+    @classmethod
+    def clean_text(cls, value: str) -> str:
+        return " ".join(value.split())
 
 
 async def current_user(
@@ -106,10 +113,57 @@ async def get_cover(
     store: SessionStore = Depends(get_session_store),
 ) -> FileResponse:
     session = await owned_session(session_id, user, store)
-    path = Path(session.file_path).parent / "cover.jpg"
-    if not path.is_file():
+    path = find_cover(Path(session.file_path).parent)
+    if path is None:
         raise HTTPException(status_code=404, detail="Cover is not available")
-    return FileResponse(path, media_type="image/jpeg", filename="cover.jpg")
+    media_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+    return FileResponse(path, media_type=media_types.get(path.suffix.lower(), "application/octet-stream"), filename=path.name)
+
+
+MAX_COVER_BYTES = 5 * 1024 * 1024
+COVER_CONTENT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
+
+@app.post("/api/sessions/{session_id}/cover")
+async def replace_cover(
+    session_id: str,
+    request: Request,
+    user: TelegramUser = Depends(current_user),
+    store: SessionStore = Depends(get_session_store),
+) -> dict[str, str]:
+    session = await owned_session(session_id, user, store)
+    if session.media_type != "audio":
+        raise HTTPException(status_code=422, detail="Обложку можно менять только у аудио")
+    if session.status != "editing":
+        raise HTTPException(status_code=409, detail="Сессия уже обрабатывается")
+    content_type = (request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    suffix = COVER_CONTENT_TYPES.get(content_type)
+    if suffix is None:
+        raise HTTPException(status_code=415, detail="Обложка должна быть JPEG, PNG или WebP")
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=422, detail="Файл обложки пустой")
+    if len(body) > MAX_COVER_BYTES:
+        raise HTTPException(status_code=413, detail="Обложка больше 5 МБ")
+    if not _looks_like_image(body, content_type):
+        raise HTTPException(status_code=415, detail="Файл не похож на изображение")
+    directory = Path(session.file_path).parent
+    for name in COVER_NAMES:
+        (directory / name).unlink(missing_ok=True)
+    (directory / f"cover{suffix}").write_bytes(body)
+    return {"cover_url": f"/api/sessions/{session.session_id}/cover"}
+
+
+def _looks_like_image(body: bytes, content_type: str) -> bool:
+    if content_type == "image/jpeg":
+        return body.startswith(b"\xff\xd8\xff")
+    if content_type == "image/png":
+        return body.startswith(b"\x89PNG\r\n\x1a\n")
+    return len(body) >= 12 and body.startswith(b"RIFF") and body[8:12] == b"WEBP"
 
 
 @app.get("/api/sessions/{session_id}/status")
@@ -135,6 +189,10 @@ async def trim_video(
         raise HTTPException(status_code=422, detail="End must be greater than start")
     if payload.end > session.duration_seconds:
         raise HTTPException(status_code=422, detail="End exceeds video duration")
+    if session.media_type == "audio":
+        updated = await store.update_fields(session.session_id, title=payload.title, artist=payload.artist)
+        if updated is not None:
+            session = updated
     claimed = await store.claim_for_processing(session.session_id)
     if claimed is None:
         raise HTTPException(status_code=409, detail="Session is not editable")
@@ -144,6 +202,8 @@ async def trim_video(
         "chat_id": claimed.chat_id,
         "input_path": claimed.file_path,
         "media_type": claimed.media_type,
+        "title": claimed.title,
+        "artist": claimed.artist,
         "start": payload.start,
         "end": payload.end,
     }

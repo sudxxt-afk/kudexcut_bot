@@ -29,17 +29,35 @@ class TrimJob(BaseModel):
     chat_id: int
     input_path: Path
     media_type: str = "video"
+    title: str = ""
+    artist: str = ""
     start: float = Field(ge=0)
     end: float = Field(gt=0)
 
 
-async def run_ffmpeg(job: TrimJob, output_path: Path, timeout: int) -> None:
+async def run_ffmpeg(job: TrimJob, output_path: Path, timeout: int, cover_path: Path | None = None) -> None:
     duration = job.end - job.start
     if job.media_type == "audio":
         command = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", str(job.start),
-            "-i", str(job.input_path), "-t", str(duration), "-vn", "-c:a", "libmp3lame", str(output_path),
+            "-i", str(job.input_path),
         ]
+        if cover_path is not None and cover_path.is_file():
+            command.extend([
+                "-i", str(cover_path),
+                "-map", "0:a:0",
+                "-map", "1:v:0",
+                "-c:v", "mjpeg",
+                "-disposition:v:0", "attached_pic",
+            ])
+        else:
+            command.extend(["-vn"])
+        command.extend(["-t", str(duration), "-c:a", "libmp3lame"])
+        if job.title:
+            command.extend(["-metadata", f"title={_metadata_value(job.title)}"])
+        if job.artist:
+            command.extend(["-metadata", f"artist={_metadata_value(job.artist)}"])
+        command.extend(["-id3v2_version", "3", str(output_path)])
     else:
         command = [
             "ffmpeg",
@@ -100,24 +118,37 @@ async def process_job(job: TrimJob, redis: Redis, bot: Bot, settings: Settings) 
     output_path = session_dir / ("output.mp3" if job.media_type == "audio" else "output.mp4")
     try:
         await update_status(redis, job.session_id, "processing")
-        await run_ffmpeg(job, output_path, settings.ffmpeg_timeout_seconds)
+        embed_cover: Path | None = None
+        if job.media_type == "audio":
+            source_cover = _find_cover(session_dir)
+            if source_cover is not None:
+                embed_cover = session_dir / "cover-embed.jpg"
+                await prepare_cover(source_cover, embed_cover, settings.ffmpeg_timeout_seconds)
+        await run_ffmpeg(job, output_path, settings.ffmpeg_timeout_seconds, cover_path=embed_cover)
         if output_path.stat().st_size > settings.max_output_size_bytes:
             raise RuntimeError("Processed video exceeds Telegram size limit")
         await update_status(redis, job.session_id, "sending")
         if job.media_type == "audio":
             original_name = "audio.mp3"
-            title = "audio"
+            title = job.title
+            performer = job.artist
             key = f"videocut:session:{job.session_id}"
             raw = await redis.get(key)
             if raw:
                 payload = json.loads(raw)
                 source_name = Path(str(payload.get("file_name") or original_name))
-                title = source_name.stem or title
-                original_name = f"{title}.mp3"
+                if not title:
+                    title = str(payload.get("title") or source_name.stem or "audio")
+                if not performer:
+                    performer = str(payload.get("artist") or "")
+            title = title or "audio"
+            original_name = f"{_safe_filename(title)}.mp3"
             await bot.send_audio(
                 chat_id=job.chat_id,
                 audio=FSInputFile(output_path, filename=original_name),
                 title=title,
+                performer=performer or None,
+                thumbnail=FSInputFile(embed_cover) if embed_cover is not None and embed_cover.is_file() and embed_cover.stat().st_size <= 200 * 1024 else None,
                 caption="Готово. Вот обрезанное аудио.",
             )
         else:
@@ -132,6 +163,47 @@ async def process_job(job: TrimJob, redis: Redis, bot: Bot, settings: Settings) 
         await update_status(redis, job.session_id, "failed")
     finally:
         shutil.rmtree(session_dir, ignore_errors=True)
+
+
+def _safe_filename(value: str) -> str:
+    cleaned = "".join("_" if char in '\\/:*?"<>|' else char for char in value).strip().strip(".")
+    return cleaned[:80] or "audio"
+
+
+def _metadata_value(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _find_cover(directory: Path) -> Path | None:
+    for name in ("cover.jpg", "cover.jpeg", "cover.png", "cover.webp"):
+        path = directory / name
+        if path.is_file() and path.stat().st_size > 0:
+            return path
+    return None
+
+
+async def prepare_cover(source: Path, dest: Path, timeout: int) -> None:
+    command = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(source),
+        "-vf", "scale=320:320:force_original_aspect_ratio=decrease",
+        "-frames:v", "1",
+        "-q:v", "5",
+        str(dest),
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.communicate()
+        raise RuntimeError("Cover conversion timed out")
+    if process.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
+        raise RuntimeError(stderr.decode("utf-8", errors="replace")[-2000:] or "Cover conversion failed")
 
 
 async def main() -> None:

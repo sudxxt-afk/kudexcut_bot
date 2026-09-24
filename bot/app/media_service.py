@@ -15,12 +15,14 @@ class MediaMetadata:
     width: int
     height: int
     mime_type: str
+    title: str = ""
+    artist: str = ""
 
 
 async def probe_audio(path: Path, *, timeout_seconds: int = 30) -> MediaMetadata:
     command = [
         "ffprobe", "-v", "error", "-select_streams", "a:0",
-        "-show_entries", "stream=codec_name:format=duration,format_name",
+        "-show_entries", "stream=codec_name:format=duration,format_name:format_tags=title,artist",
         "-of", "json", str(path),
     ]
     try:
@@ -40,11 +42,14 @@ async def probe_audio(path: Path, *, timeout_seconds: int = 30) -> MediaMetadata
         stream = payload["streams"][0]
         duration = float(payload["format"]["duration"])
         codec = stream["codec_name"]
+        tags = payload.get("format", {}).get("tags") or {}
+        title = str(tags.get("title") or tags.get("TITLE") or "").strip()
+        artist = str(tags.get("artist") or tags.get("ARTIST") or "").strip()
     except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise MediaValidationError("Audio metadata is incomplete") from exc
     if not math.isfinite(duration) or duration <= 0 or not codec:
         raise MediaValidationError("Audio metadata is invalid")
-    return MediaMetadata(duration, 0, 0, "audio/mpeg")
+    return MediaMetadata(duration, 0, 0, "audio/mpeg", title, artist)
 
 
 async def extract_cover(source_path: Path, cover_path: Path, *, timeout_seconds: int = 30) -> bool:

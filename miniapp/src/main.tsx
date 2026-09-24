@@ -16,6 +16,8 @@ type Session = {
   media_url: string;
   video_url: string;
   cover_url?: string | null;
+  title?: string;
+  artist?: string;
 };
 
 type TelegramWebApp = {
@@ -49,6 +51,13 @@ function normalizeTime(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+function fileStem(fileName: string): string {
+  const slash = Math.max(fileName.lastIndexOf('/'), fileName.lastIndexOf('\\'));
+  const base = slash >= 0 ? fileName.slice(slash + 1) : fileName;
+  const dot = base.lastIndexOf('.');
+  return (dot > 0 ? base.slice(0, dot) : base).trim();
+}
+
 function App() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const sessionId = params.get('session');
@@ -69,6 +78,10 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [artist, setArtist] = useState('');
+  const [coverUploading, setCoverUploading] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     window.Telegram?.WebApp.ready();
@@ -98,6 +111,8 @@ function App() {
         setDuration(data.duration_seconds);
         setStart(0);
         setEnd(data.duration_seconds);
+        setTitle(data.title || fileStem(data.file_name));
+        setArtist(data.artist || '');
         setLoading(false);
         if (data.cover_url) {
           void fetch(data.cover_url, { headers: { 'X-Telegram-Init-Data': initData } })
@@ -310,7 +325,12 @@ function App() {
           'Content-Type': 'application/json',
           'X-Telegram-Init-Data': window.Telegram?.WebApp.initData ?? '',
         },
-        body: JSON.stringify({ start, end }),
+        body: JSON.stringify({
+          start,
+          end,
+          title: session.media_type === 'audio' ? title.trim() : '',
+          artist: session.media_type === 'audio' ? artist.trim() : '',
+        }),
       });
       if (!response.ok) throw new Error((await response.json()).detail ?? 'Не удалось отправить задачу');
       const accepted = await response.json() as { status: string };
@@ -322,6 +342,46 @@ function App() {
     }
   }
 
+  async function changeCover(file: File | undefined) {
+    if (!file || !sessionId) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Обложка больше 5 МБ.');
+      return;
+    }
+    const contentType = file.type || 'image/jpeg';
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
+      setError('Обложка должна быть JPEG, PNG или WebP.');
+      return;
+    }
+    setCoverUploading(true);
+    setError(null);
+    const localUrl = URL.createObjectURL(file);
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/cover`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': contentType,
+          'X-Telegram-Init-Data': window.Telegram?.WebApp.initData ?? '',
+        },
+        body: file,
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { detail?: string };
+        throw new Error(payload.detail ?? 'Не удалось сменить обложку');
+      }
+      setCoverUrl((currentUrl) => {
+        if (currentUrl) URL.revokeObjectURL(currentUrl);
+        return localUrl;
+      });
+    } catch (reason) {
+      URL.revokeObjectURL(localUrl);
+      setError(reason instanceof Error ? reason.message : 'Не удалось сменить обложку');
+    } finally {
+      setCoverUploading(false);
+      if (coverInputRef.current) coverInputRef.current.value = '';
+    }
+  }
+
   if (loading) return <main className="state"><div className="loader-card"><span className="loader-orb" /><div className="loading-message">Открываю редактор<span className="loading-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></div></div></main>;
   if (error && !session) return <main className="state error">{error}</main>;
   if (!session) return <main className="state error">Сессия недоступна.</main>;
@@ -330,6 +390,7 @@ function App() {
   const endPercent = duration ? (end / duration) * 100 : 100;
   const playheadPercent = duration ? (clamp(currentTime, start, end) / duration) * 100 : 0;
   const selectedDuration = Math.max(0, end - start);
+  const audioLabel = [title.trim(), artist.trim()].filter(Boolean).join(' — ');
 
   return (
     <main className="editor-shell">
@@ -343,8 +404,12 @@ function App() {
         {session.media_type === 'audio' ? (
           <>
             <div className="audio-art">
-              <div className="cover-frame">{coverUrl ? <img src={coverUrl} alt="Обложка" /> : <span>♪</span>}</div>
-              <small>{session.file_name}</small>
+              <button className="cover-frame cover-button" type="button" aria-label="Сменить обложку" disabled={coverUploading} onClick={() => coverInputRef.current?.click()}>
+                {coverUrl ? <img src={coverUrl} alt="Обложка" /> : <span>♪</span>}
+                <em className="cover-action">{coverUploading ? 'Загружаю…' : 'Сменить обложку'}</em>
+              </button>
+              <input ref={coverInputRef} className="hidden-input" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void changeCover(event.target.files?.[0])} />
+              <small>{audioLabel || session.file_name}</small>
             </div>
             <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={videoUrl ?? undefined} preload="metadata" />
           </>
@@ -356,6 +421,19 @@ function App() {
         </button>
         <div className="preview-time"><b>{formatTime(currentTime)}</b><span>/ {formatTime(duration)}</span></div>
       </section>
+
+      {session.media_type === 'audio' && (
+        <section className="meta-card">
+          <label className="meta-field">
+            <span>Название</span>
+            <input maxLength={120} autoComplete="off" value={title} onChange={(event) => setTitle(event.target.value)} />
+          </label>
+          <label className="meta-field">
+            <span>Исполнитель</span>
+            <input maxLength={120} autoComplete="off" value={artist} onChange={(event) => setArtist(event.target.value)} />
+          </label>
+        </section>
+      )}
 
       <section className="editor-controls">
         <div className="timeline-toolbar">

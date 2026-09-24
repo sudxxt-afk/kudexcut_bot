@@ -20,6 +20,8 @@ class MediaSession:
     width: int
     height: int
     media_type: str = "video"
+    title: str = ""
+    artist: str = ""
     created_at: str = ""
     status: str = "editing"
 
@@ -43,6 +45,8 @@ class SessionService:
         width: int,
         height: int,
         media_type: str = "video",
+        title: str = "",
+        artist: str = "",
     ) -> MediaSession:
         session_id = uuid4().hex
         session = MediaSession(
@@ -57,6 +61,8 @@ class SessionService:
             width=width,
             height=height,
             media_type=media_type,
+            title=title,
+            artist=artist,
             created_at=datetime.now(UTC).isoformat(),
         )
         await self._redis.set(

@@ -92,6 +92,8 @@ def register_handlers(
                 width=metadata.width,
                 height=metadata.height,
                 media_type=media_type,
+                title=metadata.title,
+                artist=metadata.artist,
             )
             final_dir = settings.temp_dir / session.session_id
             session_dir.rename(final_dir)

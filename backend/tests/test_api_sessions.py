@@ -117,6 +117,8 @@ async def test_trim_validates_range(client) -> None:
         "chat_id": 99,
         "input_path": session_payload["file_path"],
         "media_type": "video",
+        "title": "",
+        "artist": "",
         "start": 10.0,
         "end": 20.0,
     }
@@ -149,3 +151,61 @@ async def test_audio_cover_is_returned_when_present(client, tmp_path: Path) -> N
     )
     assert response.status_code == 200
     assert response.content == b"cover"
+
+
+@pytest.mark.asyncio
+async def test_audio_trim_saves_title_and_artist(client) -> None:
+    http_client, session_id, init_data = client
+    payload = json.loads(await app.state.redis.get(f"videocut:session:{session_id}"))
+    payload["media_type"] = "audio"
+    payload["title"] = "Старое"
+    payload["artist"] = "Старый"
+    await app.state.redis.set(f"videocut:session:{session_id}", json.dumps(payload))
+
+    response = await http_client.post(
+        f"/api/sessions/{session_id}/trim",
+        headers={"X-Telegram-Init-Data": init_data},
+        json={"start": 1, "end": 4, "title": "  Новое название  ", "artist": "Новый исполнитель"},
+    )
+    assert response.status_code == 200
+    job = json.loads(await app.state.redis.lpop("videocut:jobs:trim"))
+    assert job["title"] == "Новое название"
+    assert job["artist"] == "Новый исполнитель"
+    saved = json.loads(await app.state.redis.get(f"videocut:session:{session_id}"))
+    assert saved["title"] == "Новое название"
+    assert saved["artist"] == "Новый исполнитель"
+
+
+@pytest.mark.asyncio
+async def test_cover_can_be_replaced_for_audio(client) -> None:
+    http_client, session_id, init_data = client
+    payload = json.loads(await app.state.redis.get(f"videocut:session:{session_id}"))
+    old_cover = Path(payload["file_path"]).parent / "cover.jpg"
+    old_cover.write_bytes(b"old-cover")
+    payload["media_type"] = "audio"
+    await app.state.redis.set(f"videocut:session:{session_id}", json.dumps(payload))
+    image = b"\x89PNG\r\n\x1a\n" + b"png"
+
+    response = await http_client.post(
+        f"/api/sessions/{session_id}/cover",
+        headers={"X-Telegram-Init-Data": init_data, "Content-Type": "image/png"},
+        content=image,
+    )
+    assert response.status_code == 200
+    assert response.json()["cover_url"].endswith("/cover")
+    assert not old_cover.exists()
+    assert (old_cover.parent / "cover.png").read_bytes() == image
+
+    loaded = await http_client.get(
+        f"/api/sessions/{session_id}/cover",
+        headers={"X-Telegram-Init-Data": init_data},
+    )
+    assert loaded.status_code == 200
+    assert loaded.content == image
+
+    rejected = await http_client.post(
+        f"/api/sessions/{session_id}/cover",
+        headers={"X-Telegram-Init-Data": init_data, "Content-Type": "image/jpeg"},
+        content=b"not-a-jpeg",
+    )
+    assert rejected.status_code == 415
